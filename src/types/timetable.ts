@@ -1,51 +1,32 @@
 // src/types/timetable.ts
 
-export type AcademicStage = 'STAGE_1' | 'STAGE_2';
-export type TimeBandPreference = 'ANY' | 'PRE_RECESS' | 'POST_RECESS' | 'AFTERNOON';
+export type AcademicStage = 'STAGE_1' | 'STAGE_2' | 'LOWER_SEC' | 'UPPER_SEC' | string;
+export type TimeBandPreference = 'ANY' | 'PRE_RECESS' | 'POST_RECESS' | 'AFTERNOON' | string;
+export type SchoolSession = 'MORNING' | 'AFTERNOON' | 'FULL_DAY' | string;
+export type StateGroup = 'GROUP_A' | 'GROUP_B' | string;
+export type BlockSize = 'SINGLE' | 'DOUBLE' | 'TRIPLE' | number | string;
 
-export type TeacherRole = 
-  | 'GURU_KELAS' 
-  | 'GURU_SUBJEK' 
-  | 'GURU_AGAMA' 
-  | 'GURU_PEMULIHAN' 
-  | 'GURU_PRASEKOLAH' 
-  | 'GURU_BIMBINGAN'
-  | 'GURU_KOKURIKULUM'
-  | 'GURU_GANTI'
-  | 'GURU_PENGAWAS'
-  | 'GURU_PRAKTIKUM'
-  | 'ADMIN_GB' 
-  | 'ADMIN_PK' 
-  | 'COUNSELOR' 
-  | 'PREGNANT' 
-  | 'MEDICAL_CHRONIC' 
-  | 'MATERNITY_LEAVE' 
-  | 'LEAVE_HAJI' 
-  | 'LEAVE_UMRAH' 
-  | 'LEAVE_STUDY' 
-  | 'LEAVE_CK'
-  | 'CK';
+export type TeacherRole = string;
+export type RoomType = string;
 
-export type RoomType = 
-  | 'CLASSROOM' 
-  | 'SCIENCE_LAB' 
-  | 'COMPUTER_LAB' 
-  | 'WORKSHOP' 
-  | 'RBT_WORKSHOP' 
-  | 'LIBRARY' 
-  | 'MUSIC_ROOM' 
-  | 'ART_STUDIO' 
-  | 'SURAU' 
-  | 'FIELD' 
-  | 'HALL'
-  | 'LAB'
-  | 'SPORTS_HALL';
+export interface SchoolProfileState {
+  [key: string]: any;
+}
+
+export interface FlexibleScheduleConfig {
+  [key: string]: any;
+}
+
+export interface SubjectDemand {
+  [key: string]: any;
+}
 
 export interface SchoolType {
   id: string;
   name: string;
-  category: 'KEBANGSAAN' | 'SJKC' | 'SJKT' | 'AGAMA' | 'MENENGAH' | 'SRAI' | 'INTEGRASI';
+  category: string;
   defaultRecessCount: number;
+  [key: string]: any;
 }
 
 export interface CocurricularConfig {
@@ -54,12 +35,13 @@ export interface CocurricularConfig {
   startSlot: number;
   slotCount: number;
   label?: string;
-  targetStages?: ('STAGE_1' | 'STAGE_2')[];
+  targetStages?: string[] | any[];
+  [key: string]: any;
 }
 
 export interface TimeGridConfigState {
-  stateGroup: string;
-  recessMode: 'SINGLE' | 'STAGGERED';
+  stateGroup: string | any;
+  recessMode: string | any;
   totalDailySlots: number;
   fridayMaxSlots: number;
   maxConsecutiveSlots: number;
@@ -68,40 +50,50 @@ export interface TimeGridConfigState {
   recessGroup1?: number;
   recessGroup2?: number;
   lunchPrayerSlot?: number;
-  cocurricularConfig?: CocurricularConfig;
-  [key: string]: any; // Fallback untuk properties lama
+  maxConsecutivePeriods?: number;
+  maxConsecutive?: number;
+  maxFridaySlots?: number;
+  fridayLimit?: number;
+  cocurricularConfig?: CocurricularConfig | any;
+  [key: string]: any;
 }
 
 export interface TeacherFormState {
   id: string;
   code: string;
   fullName: string;
-  role: TeacherRole | string;
+  role: TeacherRole | string | any;
   maxWeeklySlots: number;
   maxDailySlots: number;
-  availableDays?: number[];
-  unavailableDays?: number[];
+  availableDays?: any;
+  unavailableDays?: any;
   isSpecialLeave: boolean;
-  majors?: string[];
-  minDailySlots?: number;
-  minWeeklySlots?: number;
-  dailyMinSlots?: number;
-  dailyMaxSlots?: number;
-  fridayMaxSlots?: number;
+  majors?: any;
+  minDailySlots?: any;
+  minWeeklySlots?: any;
+  dailyMinSlots?: any;
+  dailyMaxSlots?: any;
+  fridayMaxSlots?: any;
+  subjectCodes?: any;
+  exemptFromOutdoor?: any;
+  isActive?: any;
+  [key: string]: any;
 }
 
 export interface RoomFormState {
   id: string;
   code: string;
   name: string;
-  roomType: RoomType | string;
+  roomType: RoomType | string | any;
   capacity: number;
-  isSharedAcrossSessions: boolean;
+  isSharedAcrossSessions?: boolean;
+  [key: string]: any;
 }
 
 export interface TeacherAllocation {
   teacherId: string;
   slots: number;
+  [key: string]: any;
 }
 
 export interface SubjectDemandFormItem {
@@ -112,17 +104,19 @@ export interface SubjectDemandFormItem {
   annualHours?: number;
   assignedTeacherId: string;
   teacherAllocations?: TeacherAllocation[];
-  requiredRoomType?: RoomType | string;
+  requiredRoomType?: RoomType | string | any;
   roomId?: string;
-  category?: 'CORE_ACADEMIC' | 'DINIYAH_RELIGIOUS' | 'ELECTIVE' | 'SPECIAL' | string;
-  blockSize?: 'SINGLE' | 'DOUBLE' | 'TRIPLE';
-  distributionProfile?: 'OPTION_A' | 'OPTION_B';
+  category?: string | any;
+  blockSize?: any;
+  distributionProfile?: any;
   isParallel?: boolean;
   parallelSyncKey?: string;
-  timeBandPreference?: TimeBandPreference | string;
+  timeBandPreference?: any;
   isPrimeTimePriority?: boolean;
-  allowedDays?: number[];
+  allowedDays?: any;
   hasNilamSlot?: boolean;
+  preferredRoomId?: any;
+  [key: string]: any;
 }
 
 export interface ClassCohortConfig {
@@ -130,10 +124,11 @@ export interface ClassCohortConfig {
   name: string;
   gradeLevel: number;
   yearLevel?: number;
-  session?: 'MORNING' | 'AFTERNOON';
-  academicStage: AcademicStage | string;
+  session?: any;
+  academicStage: AcademicStage | string | any;
   homeroomId?: string;
-  demands: SubjectDemandFormItem[];
+  demands: SubjectDemandFormItem[] | any[];
+  [key: string]: any;
 }
 
 export interface LockedSlot {
@@ -143,6 +138,11 @@ export interface LockedSlot {
   day: number;
   slot: number;
   reason?: string;
+  blockSize?: any;
+  slotIndex?: any;
+  subjectCode?: string;
+  roomId?: string;
+  [key: string]: any;
 }
 
 export interface TimetableEntry {
@@ -151,11 +151,14 @@ export interface TimetableEntry {
   classId: string;
   timeSlotId: string;
   subjectId: string;
-  teacherId: string | null;
-  roomId: string | null;
+  teacherId: string | null | undefined;
+  roomId: string | null | undefined;
   blockInstanceId: string;
   isLocked: boolean;
   isCocurricular?: boolean;
   isParallel?: boolean;
   parallelSyncKey?: string;
+  isNilam?: boolean;
+  parallelGroupId?: string;
+  [key: string]: any;
 }
