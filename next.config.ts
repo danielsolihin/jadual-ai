@@ -1,14 +1,6 @@
-import type { NextConfig } from 'next';
-
-const nextConfig: NextConfig = {
-  typescript: {
-    // Membenarkan build untuk melepasi ralat jenis TypeScript secara paksa
-    ignoreBuildErrors: true,
-  },
-  eslint: {
-    // Abaikan amaran ESLint
-    ignoreDuringBuilds: true,
-  },
-};
-
-export default nextConfig;
+import type { NextConfig } from 'next'; 
+const nextConfig: NextConfig = { 
+  typescript: { ignoreBuildErrors: true }, 
+  eslint: { ignoreDuringBuilds: true } 
+}; 
+export default nextConfig; 
