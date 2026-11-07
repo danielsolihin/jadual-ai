@@ -1,0 +1,393 @@
+/* src/components/wizard/Step6MasterGrid.module.css */
+
+/* 1. KANVAS UTAMA TERAPUNG */
+.dribbbleCanvas {
+  background: linear-gradient(135deg, #dbeafe 0%, #edf4fd 50%, #e0e7ff 100%);
+  min-height: 100vh;
+  padding: 1.5rem;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  font-family: -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Inter", sans-serif;
+  color: #1e293b;
+}
+
+.floatingShell {
+  background: #ffffff;
+  border-radius: 28px;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.08), 0 0 1px rgba(15, 23, 42, 0.05);
+  width: 100%;
+  max-width: 1480px;
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+/* 2. SIDEBAR KIRI */
+.leftSidebar {
+  background: #fbfcfe;
+  border-right: 1px solid #f1f5f9;
+  padding: 1.75rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.brandPill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2rem;
+}
+
+.brandIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: #2563eb;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1rem;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
+}
+
+.brandTitle {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.3px;
+}
+
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0.65rem 0.9rem;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #64748b;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
+}
+
+.navItem:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.navItemActive {
+  background: #eff6ff !important;
+  color: #2563eb !important;
+  font-weight: 700 !important;
+}
+
+.sidebarCardWidget {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border-radius: 18px;
+  padding: 1rem;
+  border: 1px solid #bfdbfe;
+  text-align: center;
+}
+
+/* 3. RUANG UTAMA (TENGAH) */
+.mainWorkspace {
+  padding: 1.75rem 2rem;
+  overflow-x: auto;
+  min-width: 0;
+}
+
+.topBarSearch {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+.searchPill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  width: 280px;
+}
+
+.searchPill input {
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.8rem;
+  color: #0f172a;
+  width: 100%;
+}
+
+.modeToggleGroup {
+  display: flex;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 9999px;
+  gap: 2px;
+}
+
+.modePillBtn {
+  border: none;
+  padding: 0.35rem 0.9rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: transparent;
+  color: #64748b;
+}
+
+.modePillActive {
+  background: #ffffff !important;
+  color: #2563eb !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.modePillActiveRamadan {
+  background: #f59e0b !important;
+  color: #ffffff !important;
+}
+
+.modePillActivePdpr {
+  background: #2563eb !important;
+  color: #ffffff !important;
+}
+
+/* BANNER HEADER JADUAL */
+.heroBanner {
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  border-radius: 20px;
+  padding: 1.25rem 1.5rem;
+  color: #ffffff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 10px 20px -5px rgba(37, 99, 235, 0.3);
+}
+
+/* JADUAL WAKTU KEMAS */
+.timetableWrapper {
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+  margin-bottom: 1.5rem;
+  background: #ffffff;
+}
+
+.timetableTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.timetableTable th {
+  background: #f8fafc;
+  padding: 0.65rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+  border-right: 1px solid #f1f5f9;
+  text-align: center;
+}
+
+.timetableTable td {
+  padding: 3px;
+  border-bottom: 1px solid #f1f5f9;
+  border-right: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.dayCellLabel {
+  background: #f8fafc;
+  font-weight: 800;
+  font-size: 0.75rem;
+  color: #334155;
+  text-align: center;
+  width: 80px;
+  letter-spacing: -0.2px;
+}
+
+/* KAD PETAK JADUAL */
+.cardChip {
+  border-radius: 10px;
+  padding: 6px 8px;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
+}
+
+.cardChip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+}
+
+.chipSubject {
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+
+.chipTeacher {
+  font-size: 0.60rem;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.chipRoom {
+  font-size: 0.55rem;
+  opacity: 0.75;
+}
+
+.recessCardChip {
+  background: #fef9c3 !important;
+  color: #854d0e !important;
+  border: 1px solid #fde047 !important;
+  border-radius: 10px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.70rem;
+  padding: 12px 4px;
+}
+
+.emptySlotChip {
+  border-radius: 10px;
+  border: 1.5px dashed #e2e8f0;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  color: #94a3b8;
+  cursor: pointer;
+  background: transparent;
+  transition: all 0.15s ease;
+}
+
+.emptySlotChip:hover {
+  border-color: #3b82f6;
+  color: #2563eb;
+  background: #f8fafc;
+}
+
+/* 4. PANEL KANAN (PROFIL & STATUS) */
+.rightPanel {
+  background: #ffffff;
+  border-left: 1px solid #f1f5f9;
+  padding: 1.75rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.userProfilePill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.avatarBox {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.statWidgetBox {
+  background: #f8fafc;
+  border-radius: 16px;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+}
+
+.progressBarContainer {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 9999px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.progressBarFill {
+  height: 100%;
+  border-radius: 9999px;
+  background: #2563eb;
+}
+
+/* CETAKAN PDF MEDIA */
+@media print {
+  .dribbbleCanvas {
+    background: #ffffff !important;
+    padding: 0 !important;
+  }
+  .floatingShell {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    display: block !important;
+  }
+  .leftSidebar,
+  .rightPanel,
+  .topBarSearch,
+  .modeToggleGroup,
+  .screenOnly {
+    display: none !important;
+  }
+  .mainWorkspace {
+    padding: 0 !important;
+  }
+}
+
+/* RESPONSIF */
+@media (max-width: 1200px) {
+  .floatingShell {
+    grid-template-columns: 200px 1fr;
+  }
+  .rightPanel {
+    display: none;
+  }
+}
+@media (max-width: 768px) {
+  .floatingShell {
+    grid-template-columns: 1fr;
+  }
+  .leftSidebar {
+    display: none;
+  }
+}
