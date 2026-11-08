@@ -40,7 +40,9 @@ import {
   X,
   DoorOpen,
   Clock,
-  RotateCcw
+  RotateCcw,
+  Sliders,
+  Settings2
 } from 'lucide-react';
 
 export type TimeBandPreference = 'ANY' | 'PRE_RECESS' | 'POST_RECESS' | 'AFTERNOON';
@@ -77,6 +79,12 @@ const INITIAL_SUBJECT_REGISTRY: PredefinedSubject[] = [
   { code: 'TAF', name: 'Tahfiz / Hafazan', defaultSlots: 3, category: 'DINIYAH_RELIGIOUS', requiredRoomType: 'SURAU', timeBandPreference: 'ANY' },
 ];
 
+interface SlotLimitsConfig {
+  stage1: number;
+  stage2: number;
+  other: number;
+}
+
 interface Props {
   classes?: ClassCohortConfig[];
   teachers?: TeacherFormState[];
@@ -94,6 +102,11 @@ interface Props {
   onBack: () => void;
   [key: string]: any;
 }
+
+const isValidUUID = (str: any): boolean => {
+  if (typeof str !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str.trim());
+};
 
 const getSavedTimeBandMap = (): Record<string, string> => {
   if (typeof window === 'undefined') return {};
@@ -159,15 +172,39 @@ export default function Step4Curriculum(props: Props) {
     onBack,
   } = props;
 
+  // KONFIGURASI HAD SLOT FLEKSIBEL (BOLEH DIEDIT OLEH ADMIN)
+  const [slotLimits, setSlotLimits] = useState<SlotLimitsConfig>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('timetable_custom_slot_limits');
+        if (saved) return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return { stage1: 44, stage2: 47, other: 54 };
+  });
+
+  const [isSlotConfigModalOpen, setIsSlotConfigModalOpen] = useState(false);
+  const [tempSlotLimits, setTempSlotLimits] = useState<SlotLimitsConfig>(slotLimits);
+
   const [localClasses, setLocalClasses] = useState<ClassCohortConfig[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('timetable_saved_classes');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return applySavedTimeBands(parsed);
+          }
+        }
+      } catch (e) {}
+    }
     return applySavedTimeBands(classes || []);
   });
-  const [selectedClassIndex, setSelectedClassIndex] = useState(0);
 
+  const [selectedClassIndex, setSelectedClassIndex] = useState(0);
   const [stageFilter, setStageFilter] = useState<'ALL' | AcademicStage>('ALL');
   const [yearFilter, setYearFilter] = useState<number | 'ALL'>('ALL');
 
-  // Modal ralat apabila Seterusnya diklik
   const [overloadErrorModal, setOverloadErrorModal] = useState<{
     isOpen: boolean;
     errors: { className: string; demanded: number; maxAllowed: number; duplicates: string[] }[];
@@ -195,8 +232,89 @@ export default function Step4Curriculum(props: Props) {
     return base;
   });
 
+  const activeClassesList = localClasses.length > 0 ? localClasses : classes;
+
+  const globalTeacherLoadMap = useMemo(() => {
+    const map = new Map<string, number>();
+    activeClassesList.forEach(cls => {
+      (cls.demands || []).forEach(d => {
+        if (d.teacherAllocations && d.teacherAllocations.length > 0) {
+          d.teacherAllocations.forEach(a => {
+            if (a.teacherId) {
+              map.set(a.teacherId, (map.get(a.teacherId) || 0) + (Number(a.slots) || 0));
+            }
+          });
+        } else if (d.assignedTeacherId && d.assignedTeacherId !== 'ALL_TEACHERS') {
+          map.set(d.assignedTeacherId, (map.get(d.assignedTeacherId) || 0) + (Number(d.weeklySlots) || 0));
+        }
+      });
+    });
+    return map;
+  }, [activeClassesList]);
+
+  // FUNGSI SIMPANAN PINTAR DENGAN AUTOMATIC FALLBACK
+  const saveDemandsToDb = async (targetClsId: string, demandsList: SubjectDemandFormItem[]) => {
+    if (!targetClsId || !demandsList || demandsList.length === 0) return;
+
+    try {
+      await supabase.from('class_subject_demands').delete().eq('class_id', targetClsId);
+
+      const fullPayload = demandsList.map(d => {
+        const isPerh = d.code === 'PERH';
+        const teacherId = (!isPerh && d.assignedTeacherId && d.assignedTeacherId !== 'ALL_TEACHERS') ? d.assignedTeacherId : null;
+        const validTeacherId = (teacherId && isValidUUID(teacherId)) ? teacherId : null;
+        const validRoomId = (d.roomId && isValidUUID(d.roomId)) ? d.roomId : null;
+
+        return {
+          class_id: targetClsId,
+          subject_code: d.code,
+          subject_name: d.name,
+          weekly_slots: Number(d.weeklySlots) || 0,
+          required_room_type: d.requiredRoomType || 'CLASSROOM',
+          room_id: validRoomId,
+          time_band_preference: d.timeBandPreference || 'ANY',
+          is_prime_time_priority: Boolean(d.timeBandPreference === 'PRE_RECESS'),
+          is_parallel: Boolean(d.isParallel),
+          parallel_sync_key: d.parallelSyncKey || null,
+          assigned_teacher_id: validTeacherId,
+          teacher_allocations: d.teacherAllocations || [],
+          allowed_days: d.allowedDays || (isPerh ? [1] : [1, 2, 3, 4, 5]),
+        };
+      });
+
+      const { error: fullError } = await supabase.from('class_subject_demands').insert(fullPayload);
+
+      if (fullError) {
+        const minimalPayload = demandsList.map(d => {
+          const isPerh = d.code === 'PERH';
+          const teacherId = (!isPerh && d.assignedTeacherId && d.assignedTeacherId !== 'ALL_TEACHERS') ? d.assignedTeacherId : null;
+          return {
+            class_id: targetClsId,
+            subject_code: d.code,
+            subject_name: d.name,
+            weekly_slots: Number(d.weeklySlots) || 0,
+            required_room_type: d.requiredRoomType || 'CLASSROOM',
+            assigned_teacher_id: (teacherId && isValidUUID(teacherId)) ? teacherId : null,
+          };
+        });
+
+        const { error: minError } = await supabase.from('class_subject_demands').insert(minimalPayload);
+        if (minError) {
+          console.warn('Nota Supabase: Data telah diselamatkan ke memori tempatan.', minError.message || minError);
+        }
+      }
+    } catch (err) {
+      console.warn('Ralat sambungan pangkalan data:', err);
+    }
+  };
+
   const notifyClassesUpdate = (updated: ClassCohortConfig[]) => {
     setLocalClasses(updated);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('timetable_saved_classes', JSON.stringify(updated));
+      } catch (e) {}
+    }
     if (typeof onUpdateClasses === 'function') onUpdateClasses(updated);
     if (typeof setClasses === 'function') (setClasses as any)(updated);
     if (typeof props.onUpdate === 'function') props.onUpdate({ classes: updated });
@@ -254,43 +372,66 @@ export default function Step4Curriculum(props: Props) {
           .select('*, class_subject_demands(*)')
           .order('year_level', { ascending: true });
 
+        let cachedFallback: ClassCohortConfig[] = [];
+        if (typeof window !== 'undefined') {
+          try {
+            const raw = localStorage.getItem('timetable_saved_classes');
+            if (raw) cachedFallback = JSON.parse(raw);
+          } catch (e) {}
+        }
+
         if (!error && dbClasses && dbClasses.length > 0) {
           const savedBandsMap = getSavedTimeBandMap();
 
-          const formatted: ClassCohortConfig[] = dbClasses.map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            gradeLevel: c.grade_level ?? c.year_level ?? 1,
-            yearLevel: c.year_level ?? c.grade_level ?? 1,
-            academicStage: c.academic_stage || ((c.grade_level || c.year_level || 1) <= 3 ? 'STAGE_1' : 'STAGE_2'),
-            homeroomId: c.homeroom_id || undefined,
-            demands: (c.class_subject_demands || []).map((d: any) => {
-              const persistentPreference = resolveTimeBand(
-                c.id, 
-                c.name, 
-                d.subject_code, 
-                d.id, 
-                d.time_band_preference, 
-                savedBandsMap
-              );
+          const formatted: ClassCohortConfig[] = dbClasses.map((c: any) => {
+            const dbDemands = c.class_subject_demands || [];
+            const localMatch = cachedFallback.find(fb => fb.id === c.id || fb.name === c.name);
 
-              return {
-                id: d.id,
-                code: d.subject_code,
-                name: d.subject_name,
-                weeklySlots: d.weekly_slots,
-                assignedTeacherId: d.subject_code === 'PERH' ? 'ALL_TEACHERS' : (d.assigned_teacher_id || ''),
-                requiredRoomType: d.required_room_type,
-                roomId: d.room_id || d.roomId || undefined,
-                timeBandPreference: persistentPreference,
-                isPrimeTimePriority: Boolean(persistentPreference === 'PRE_RECESS'),
-                isParallel: d.is_parallel,
-                parallelSyncKey: d.parallel_sync_key,
-                teacherAllocations: d.teacher_allocations || [],
-                allowedDays: d.allowed_days || (d.subject_code === 'PERH' ? [1] : [1, 2, 3, 4, 5]),
-              };
-            }),
-          }));
+            let resolvedDemands: SubjectDemandFormItem[] = [];
+
+            if (dbDemands.length > 0) {
+              resolvedDemands = dbDemands.map((d: any) => {
+                const persistentPreference = resolveTimeBand(
+                  c.id, 
+                  c.name, 
+                  d.subject_code, 
+                  d.id, 
+                  d.time_band_preference, 
+                  savedBandsMap
+                );
+
+                return {
+                  id: d.id,
+                  code: d.subject_code,
+                  name: d.subject_name,
+                  weeklySlots: Number(d.weekly_slots) || 0,
+                  assignedTeacherId: d.subject_code === 'PERH' ? 'ALL_TEACHERS' : (d.assigned_teacher_id || ''),
+                  requiredRoomType: d.required_room_type || 'CLASSROOM',
+                  roomId: d.room_id || undefined,
+                  timeBandPreference: persistentPreference,
+                  isPrimeTimePriority: Boolean(persistentPreference === 'PRE_RECESS'),
+                  isParallel: Boolean(d.is_parallel),
+                  parallelSyncKey: d.parallelSyncKey || undefined,
+                  teacherAllocations: d.teacher_allocations || [],
+                  allowedDays: d.allowed_days || (d.subject_code === 'PERH' ? [1] : [1, 2, 3, 4, 5]),
+                  hasNilamSlot: d.has_nilam_slot || d.subject_code === 'BM',
+                };
+              });
+            } else if (localMatch && localMatch.demands && localMatch.demands.length > 0) {
+              resolvedDemands = localMatch.demands;
+              saveDemandsToDb(c.id, resolvedDemands);
+            }
+
+            return {
+              id: c.id,
+              name: c.name,
+              gradeLevel: c.grade_level ?? c.year_level ?? 1,
+              yearLevel: c.year_level ?? c.grade_level ?? 1,
+              academicStage: c.academic_stage || ((c.grade_level || c.year_level || 1) <= 3 ? 'STAGE_1' : 'STAGE_2'),
+              homeroomId: c.homeroom_id || undefined,
+              demands: resolvedDemands,
+            };
+          });
 
           setLocalClasses(formatted);
           if (typeof setClasses === 'function') (setClasses as any)(formatted);
@@ -309,8 +450,6 @@ export default function Step4Curriculum(props: Props) {
   const [selectedDemandIds, setSelectedDemandIds] = useState<string[]>([]);
   const [splittingDemandId, setSplittingDemandId] = useState<string | null>(null);
   const [modalAllocations, setModalAllocations] = useState<TeacherAllocation[]>([]);
-
-  const activeClassesList = localClasses.length > 0 ? localClasses : classes;
 
   const isGroupA = stateGroup === 'GROUP_A' || timeGridConfig?.stateGroup === 'GROUP_A';
   const dayPills = isGroupA
@@ -337,6 +476,14 @@ export default function Step4Curriculum(props: Props) {
     if (c.academicStage === 'STAGE_1' || c.academicStage === 'STAGE_2') return c.academicStage;
     const g = getNormalizedGrade(c);
     return g <= 3 ? 'STAGE_1' : 'STAGE_2';
+  };
+
+  // KIRAAN HAD WAKTU MENGIKUT PENETAPAN ADMIN
+  const getTargetSlotsForClass = (cls: ClassCohortConfig): number => {
+    const stage = getNormalizedStage(cls);
+    if (stage === 'STAGE_1') return slotLimits.stage1;
+    if (stage === 'STAGE_2') return slotLimits.stage2;
+    return slotLimits.other;
   };
 
   const filteredClassesWithIndex = useMemo(() => {
@@ -413,7 +560,6 @@ export default function Step4Curriculum(props: Props) {
     return true;
   };
 
-  // KIRAAN BEBAN MINGGUAN KELAS
   const calculateTotalWeeklySlots = (clsDemands: SubjectDemandFormItem[]) => {
     if (!clsDemands) return 0;
     let total = 0;
@@ -433,11 +579,10 @@ export default function Step4Curriculum(props: Props) {
   };
 
   const currentTotalSlots = currentClass ? calculateTotalWeeklySlots(currentClass.demands) : 0;
-  const targetSlots = currentClass?.academicStage === 'STAGE_1' ? 44 : currentClass?.academicStage === 'STAGE_2' ? 47 : 54;
+  const targetSlots = currentClass ? getTargetSlotsForClass(currentClass) : 44;
   const isQuotaMatched = currentTotalSlots <= targetSlots;
   const isOverQuota = currentTotalSlots > targetSlots;
 
-  // Audit Bertindih: Kenal pasti subjek yang didaftarkan dua kali dalam satu kelas (cth: SIR ada 2 baris berasingan)
   const getDuplicateSubjects = (clsDemands: SubjectDemandFormItem[]): string[] => {
     const counts = new Map<string, number>();
     clsDemands.forEach(d => {
@@ -453,11 +598,22 @@ export default function Step4Curriculum(props: Props) {
       idx === selectedClassIndex ? { ...c, demands: newDemands } : c
     );
     notifyClassesUpdate(updated);
+
+    if (currentClass) {
+      saveDemandsToDb(currentClass.id, newDemands);
+    }
   };
 
-  // =========================================================================
-  // FUNGSI SIMPAN ZON WAKTU KEKAL (MULTI-KEY LOCALSTORAGE + SUPABASE)
-  // =========================================================================
+  const handleSaveSlotLimits = () => {
+    setSlotLimits(tempSlotLimits);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('timetable_custom_slot_limits', JSON.stringify(tempSlotLimits));
+      } catch (e) {}
+    }
+    setIsSlotConfigModalOpen(false);
+  };
+
   const handleTimeBandChange = async (demandId: string, preference: TimeBandPreference) => {
     if (!currentClass) return;
     const targetDemand = currentClass.demands.find(d => d.id === demandId);
@@ -481,10 +637,6 @@ export default function Step4Curriculum(props: Props) {
         localStorage.setItem('timetable_saved_timebands', JSON.stringify(savedBands));
       } catch (e) {}
     }
-
-    try {
-      await supabase.from('class_subject_demands').update({ time_band_preference: preference, is_prime_time_priority: preference === 'PRE_RECESS' }).eq('id', demandId);
-    } catch (err) {}
   };
 
   const handlePerhDayChange = async (demandId: string, dayNum: number) => {
@@ -494,7 +646,6 @@ export default function Step4Curriculum(props: Props) {
       return d;
     });
     updateCurrentClassDemands(updatedDemands);
-    try { await supabase.from('class_subject_demands').update({ allowed_days: [dayNum] }).eq('id', demandId); } catch (e) {}
   };
 
   const handlePerhLocationChange = async (demandId: string, locationVal: string) => {
@@ -511,7 +662,6 @@ export default function Step4Curriculum(props: Props) {
       return d;
     });
     updateCurrentClassDemands(updatedDemands);
-    try { await supabase.from('class_subject_demands').update({ room_id: isStandardType ? null : locationVal, required_room_type: isStandardType ? locationVal : 'HALL' }).eq('id', demandId); } catch (e) {}
   };
 
   const handleSyncPerhToAllClasses = async () => {
@@ -540,9 +690,9 @@ export default function Step4Curriculum(props: Props) {
       }));
       notifyClassesUpdate(updated);
 
-      try {
-        await supabase.from('class_subject_demands').update({ allowed_days: [day], room_id: isStandardType ? null : loc, required_room_type: isStandardType ? loc : 'HALL' }).eq('subject_code', 'PERH');
-      } catch (e) {}
+      for (const cls of updated) {
+        await saveDemandsToDb(cls.id, cls.demands);
+      }
       alert('Tetapan hari dan lokasi perhimpunan berjaya diseragamkan ke semua kelas!');
     }
   };
@@ -634,10 +784,21 @@ export default function Step4Curriculum(props: Props) {
     const savedBandsMap = getSavedTimeBandMap();
 
     const makeDemandsList = (clsTarget: ClassCohortConfig) => {
-      const perhDemand = clsTarget.demands.find(d => d.code === 'PERH') || {
-        id: `d_perh_${clsTarget.id}`, code: 'PERH', name: 'Perhimpunan Rasmi', category: 'SPECIAL', annualHours: 32, weeklySlots: 1, blockSize: 'SINGLE', distributionProfile: 'OPTION_A', assignedTeacherId: 'ALL_TEACHERS', requiredRoomType: 'HALL', isParallel: false, allowedDays: [1],
+      const perh = clsTarget.demands.find(d => d.code === 'PERH') || {
+        id: `d_perh_${clsTarget.id}`, 
+        code: 'PERH', 
+        name: 'Perhimpunan Rasmi', 
+        category: 'SPECIAL', 
+        annualHours: 32, 
+        weeklySlots: 1, 
+        blockSize: 'SINGLE', 
+        distributionProfile: 'OPTION_A', 
+        assignedTeacherId: 'ALL_TEACHERS', 
+        requiredRoomType: 'HALL', 
+        isParallel: false, 
+        allowedDays: [1],
       };
-      const newDemands: SubjectDemandFormItem[] = [perhDemand];
+      const newDemands: SubjectDemandFormItem[] = [perh];
 
       checkedBankCodes.forEach(code => {
         if (code === 'PERH') return;
@@ -652,7 +813,22 @@ export default function Step4Curriculum(props: Props) {
         } else {
           newDemands.push({
             id: `d_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            code: reg.code, name: reg.name, category: reg.category, annualHours: reg.defaultSlots * 32, weeklySlots: reg.defaultSlots, blockSize: reg.defaultSlots >= 2 ? 'DOUBLE' : 'SINGLE', distributionProfile: 'OPTION_A', assignedTeacherId: '', teacherAllocations: [], requiredRoomType: reg.requiredRoomType as RoomType, isParallel: Boolean(reg.isParallel), parallelSyncKey: reg.parallelSyncKey, timeBandPreference: persistentPref, isPrimeTimePriority: persistentPref === 'PRE_RECESS', hasNilamSlot: reg.code === 'BM', allowedDays: [1, 2, 3, 4, 5],
+            code: reg.code, 
+            name: reg.name, 
+            category: reg.category, 
+            annualHours: reg.defaultSlots * 32, 
+            weeklySlots: reg.defaultSlots, 
+            blockSize: reg.defaultSlots >= 2 ? 'DOUBLE' : 'SINGLE', 
+            distributionProfile: 'OPTION_A', 
+            assignedTeacherId: '', 
+            teacherAllocations: [], 
+            requiredRoomType: reg.requiredRoomType as RoomType, 
+            isParallel: Boolean(reg.isParallel), 
+            parallelSyncKey: reg.parallelSyncKey, 
+            timeBandPreference: persistentPref, 
+            isPrimeTimePriority: persistentPref === 'PRE_RECESS', 
+            hasNilamSlot: reg.code === 'BM', 
+            allowedDays: [1, 2, 3, 4, 5],
           });
         }
       });
@@ -661,16 +837,10 @@ export default function Step4Curriculum(props: Props) {
 
     const targetClasses = syncBankToAllInGrade ? activeClassesList.filter(c => getNormalizedGrade(c) === currentGrade) : [currentClass];
 
-    try {
-      for (const targetCls of targetClasses) {
-        const dList = makeDemandsList(targetCls);
-        await supabase.from('class_subject_demands').delete().eq('class_id', targetCls.id);
-        const insertPayload = dList.map(d => ({
-          class_id: targetCls.id, subject_code: d.code, subject_name: d.name, weekly_slots: Number(d.weeklySlots) || 0, required_room_type: d.requiredRoomType || 'CLASSROOM', room_id: d.roomId || null, time_band_preference: d.timeBandPreference || 'ANY', is_prime_time_priority: Boolean(d.timeBandPreference === 'PRE_RECESS'), is_parallel: Boolean(d.isParallel), parallel_sync_key: d.parallelSyncKey || null, assigned_teacher_id: d.code === 'PERH' ? 'ALL_TEACHERS' : (d.assignedTeacherId || null), teacher_allocations: d.teacherAllocations || [], allowed_days: d.allowedDays || (d.code === 'PERH' ? [1] : [1, 2, 3, 4, 5]),
-        }));
-        await supabase.from('class_subject_demands').insert(insertPayload);
-      }
-    } catch (err) {}
+    for (const targetCls of targetClasses) {
+      const dList = makeDemandsList(targetCls);
+      await saveDemandsToDb(targetCls.id, dList);
+    }
 
     if (syncBankToAllInGrade) {
       const updatedClasses = activeClassesList.map(c => {
@@ -684,18 +854,30 @@ export default function Step4Curriculum(props: Props) {
     setIsBankModalOpen(false);
   };
 
-  const handleCopyPackageToSameGrade = () => {
+  const handleCopyPackageToSameGrade = async () => {
     if (!currentClass) return;
     if (confirm(`Salin senarai pakej subjek dari ${currentClass.name} ke SEMUA kelas Tahun ${currentGrade}?`)) {
       const updatedClasses = activeClassesList.map(c => {
         if (getNormalizedGrade(c) === currentGrade && c.id !== currentClass.id) {
-          const clonedDemands = currentClass.demands.map(d => ({ ...d, id: `d_${c.id}_${d.code}`, assignedTeacherId: d.code === 'PERH' ? 'ALL_TEACHERS' : '', teacherAllocations: [] }));
+          const clonedDemands = currentClass.demands.map(d => ({ 
+            ...d, 
+            id: `d_${c.id}_${d.code}_${Date.now()}`, 
+            assignedTeacherId: d.code === 'PERH' ? 'ALL_TEACHERS' : '', 
+            teacherAllocations: [] 
+          }));
           return { ...c, demands: clonedDemands };
         }
         return c;
       });
       notifyClassesUpdate(updatedClasses);
-      alert(`Pakej subjek berjaya diseragamkan ke semua kelas Tahun ${currentGrade}.`);
+
+      for (const c of updatedClasses) {
+        if (getNormalizedGrade(c) === currentGrade && c.id !== currentClass.id) {
+          await saveDemandsToDb(c.id, c.demands);
+        }
+      }
+
+      alert(`Pakej subjek berjaya diseragamkan dan disimpan ke semua kelas Tahun ${currentGrade}.`);
     }
   };
 
@@ -709,7 +891,17 @@ export default function Step4Curriculum(props: Props) {
     const updatedDemands = currentClass.demands.map(d => {
       if (d.id === demandId) {
         return {
-          ...d, code: regItem.code, name: regItem.name, weeklySlots: regItem.defaultSlots, category: regItem.category, requiredRoomType: regItem.requiredRoomType as RoomType, isParallel: Boolean(regItem.isParallel), parallelSyncKey: regItem.parallelSyncKey, timeBandPreference: persistentPref, isPrimeTimePriority: persistentPref === 'PRE_RECESS', teacherAllocations: d.assignedTeacherId ? [{ teacherId: d.assignedTeacherId, slots: regItem.defaultSlots }] : [],
+          ...d, 
+          code: regItem.code, 
+          name: regItem.name, 
+          weeklySlots: regItem.defaultSlots, 
+          category: regItem.category, 
+          requiredRoomType: regItem.requiredRoomType as RoomType, 
+          isParallel: Boolean(regItem.isParallel), 
+          parallelSyncKey: regItem.parallelSyncKey, 
+          timeBandPreference: persistentPref, 
+          isPrimeTimePriority: persistentPref === 'PRE_RECESS', 
+          teacherAllocations: d.assignedTeacherId ? [{ teacherId: d.assignedTeacherId, slots: regItem.defaultSlots }] : [],
         };
       }
       return d;
@@ -825,14 +1017,11 @@ export default function Step4Curriculum(props: Props) {
     setSplittingDemandId(null);
   };
 
-  // =========================================================================
-  // SISTEM AUDIT GRID KELAS & PAPARAN AMARAN (DIPINDAHKAN KE LANGKAH 4)
-  // =========================================================================
-  const handleProceedToNext = () => {
+  const handleProceedToNext = async (forceBypass = false) => {
     const errorList: { className: string; demanded: number; maxAllowed: number; duplicates: string[] }[] = [];
 
     activeClassesList.forEach(cls => {
-      const maxAllowed = cls.academicStage === 'STAGE_1' ? 44 : (cls.academicStage === 'STAGE_2' ? 47 : 54);
+      const maxAllowed = getTargetSlotsForClass(cls);
       const demanded = calculateTotalWeeklySlots(cls.demands);
       
       if (demanded > maxAllowed) {
@@ -845,9 +1034,15 @@ export default function Step4Curriculum(props: Props) {
       }
     });
 
-    if (errorList.length > 0) {
+    if (errorList.length > 0 && !forceBypass) {
       setOverloadErrorModal({ isOpen: true, errors: errorList });
       return;
+    }
+
+    for (const cls of activeClassesList) {
+      if (cls.demands && cls.demands.length > 0) {
+        await saveDemandsToDb(cls.id, cls.demands);
+      }
     }
 
     if (typeof onNext === 'function') {
@@ -872,7 +1067,7 @@ export default function Step4Curriculum(props: Props) {
         boxShadow: '0 4px 6px -1px rgba(15, 23, 42, 0.03), 0 2px 4px -2px rgba(15, 23, 42, 0.02)'
       }}>
 
-        {/* HEADER LANGKAH 4 */}
+        {/* HEADER */}
         <div style={{ marginBottom: '1.25rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
             <span style={{
@@ -895,11 +1090,11 @@ export default function Step4Curriculum(props: Props) {
             Pengurusan Kurikulum, Bank Subjek & Subjek Selari
           </h1>
           <p style={{ fontSize: '0.80rem', color: '#64748b', margin: 0, lineHeight: 1.4 }}>
-            Tetapkan waktu subjek, pilih zon masa PdP (Pra-Rehat / Pasca-Rehat / Bebas), tetapkan lokasi & hari perhimpunan, serta agihkan guru. Pilihan zon akan disimpan secara kekal.
+            Tetapkan waktu subjek, ubah had slot mengikut ketetapan sekolah, pilih zon masa PdP, serta agihkan guru.
           </p>
         </div>
 
-        {/* SEKSYEN 1: NAVIGASI BERHIRARKI 3 PERINGKAT */}
+        {/* SEKSYEN 1: NAVIGASI TAHAP & TAHUN */}
         <div style={{
           background: '#ffffff',
           border: '1px solid #cbd5e1',
@@ -916,8 +1111,8 @@ export default function Step4Curriculum(props: Props) {
             <div style={{ display: 'inline-flex', background: '#f1f5f9', padding: '2px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
               {[
                 { key: 'ALL', label: 'Semua Tahap' },
-                { key: 'STAGE_1', label: 'Tahap 1 (Tahun 1 - 3)' },
-                { key: 'STAGE_2', label: 'Tahap 2 (Tahun 4 - 6)' },
+                { key: 'STAGE_1', label: `Tahap 1 (Maks ${slotLimits.stage1}W)` },
+                { key: 'STAGE_2', label: `Tahap 2 (Maks ${slotLimits.stage2}W)` },
               ].map(tab => (
                 <button
                   key={tab.key}
@@ -1004,10 +1199,9 @@ export default function Step4Curriculum(props: Props) {
                   const isSelected = selectedClassIndex === originalIdx;
                   const isComplete = checkIsClassComplete(classData);
                   const totalW = calculateTotalWeeklySlots(classData.demands);
-                  const maxAllowed = classData.academicStage === 'STAGE_1' ? 44 : (classData.academicStage === 'STAGE_2' ? 47 : 54);
+                  const maxAllowed = getTargetSlotsForClass(classData);
                   const isOverload = totalW > maxAllowed;
 
-                  // Warna pintar: Merah jika lebih kuota, Hijau jika siap, Kelabu jika biasa, Biru jika dipilih
                   const bgCol = isOverload ? (isSelected ? '#dc2626' : '#fef2f2') : (isComplete ? (isSelected ? '#16a34a' : '#dcfce7') : (isSelected ? '#2563eb' : '#f1f5f9'));
                   const txtCol = isOverload ? (isSelected ? '#ffffff' : '#b91c1c') : (isComplete ? (isSelected ? '#ffffff' : '#15803d') : (isSelected ? '#ffffff' : '#1e293b'));
                   const brCol = isOverload ? (isSelected ? '1.5px solid #991b1b' : '1px solid #fca5a5') : (isComplete ? (isSelected ? '1.5px solid #15803d' : '1px solid #86efac') : (isSelected ? '1.5px solid #1d4ed8' : '1px solid #cbd5e1'));
@@ -1128,25 +1322,54 @@ export default function Step4Curriculum(props: Props) {
                   </button>
                 )}
 
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '0.35rem 0.75rem',
-                  borderRadius: '9999px',
-                  fontSize: '0.76rem',
-                  fontWeight: 800,
-                  backgroundColor: isQuotaMatched ? '#f0fdf4' : '#fef2f2',
-                  color: isQuotaMatched ? '#166534' : '#dc2626',
-                  border: `1.5px solid ${isQuotaMatched ? '#86efac' : '#fca5a5'}`
-                }}>
-                  {isQuotaMatched ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
-                  <span>Jumlah Slot: {currentTotalSlots} / {targetSlots} Waktu</span>
+                {/* KETETAPAN HAD SLOT & STATUS BEBAN */}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '9999px',
+                    fontSize: '0.76rem',
+                    fontWeight: 800,
+                    backgroundColor: isQuotaMatched ? '#f0fdf4' : '#fef2f2',
+                    color: isQuotaMatched ? '#166534' : '#dc2626',
+                    border: `1.5px solid ${isQuotaMatched ? '#86efac' : '#fca5a5'}`
+                  }}>
+                    {isQuotaMatched ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
+                    <span>Jumlah Slot: {currentTotalSlots} / {targetSlots} Waktu</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempSlotLimits(slotLimits);
+                      setIsSlotConfigModalOpen(true);
+                    }}
+                    title="Ubah had maksimum waktu mingguan mengikut ketetapan sekolah anda"
+                    style={{
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
+                      color: '#2563eb',
+                      padding: '0.35rem 0.6rem',
+                      borderRadius: '8px',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                    }}
+                  >
+                    <Sliders size={13} />
+                    <span>Ubah Had Slot</span>
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* SEKSYEN KHAS: PERHIMPUNAN RASMI (DI BAWAH MEDAN KELAS SEMASA) */}
+            {/* PERHIMPUNAN RASMI */}
             {perhDemand && (
               <div style={{
                 background: '#f0fdf4',
@@ -1182,7 +1405,6 @@ export default function Step4Curriculum(props: Props) {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                  {/* Pemilihan Hari Perhimpunan */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#166534' }}>Hari:</span>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', background: '#ffffff', padding: '2px 5px', borderRadius: '6px', border: '1px solid #86efac' }}>
@@ -1224,7 +1446,6 @@ export default function Step4Curriculum(props: Props) {
                     </span>
                   </div>
 
-                  {/* Pemilihan Tempat / Lokasi */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <DoorOpen size={14} color="#166534" />
                     <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#166534' }}>Tempat:</span>
@@ -1252,7 +1473,6 @@ export default function Step4Curriculum(props: Props) {
                     </select>
                   </div>
 
-                  {/* Butang Seragamkan Semua Kelas */}
                   <button
                     type="button"
                     onClick={handleSyncPerhToAllClasses}
@@ -1316,8 +1536,6 @@ export default function Step4Curriculum(props: Props) {
                       const isSelected = selectedDemandIds.includes(demand.id);
                       const isSplit = demand.teacherAllocations && demand.teacherAllocations.length > 1;
                       const badgeStyle = getCategoryBadgeStyle(demand.category);
-                      
-                      // Highlight merah jika subjek ini berganda dalam satu kelas
                       const isDuplicate = duplicateSubjectsInCurrentClass.includes(demand.code);
 
                       const currentDays = Array.isArray(demand.allowedDays) && demand.allowedDays.length > 0 
@@ -1400,7 +1618,7 @@ export default function Step4Curriculum(props: Props) {
                               <input
                                 type="number"
                                 min={1}
-                                max={30}
+                                max={40}
                                 value={demand.weeklySlots ?? ''}
                                 onChange={(e) => handleWeeklySlotsChange(demand.id, e.target.value)}
                                 title="Ubah bilangan waktu"
@@ -1477,10 +1695,9 @@ export default function Step4Curriculum(props: Props) {
                             )}
                           </td>
 
-                          {/* SISTEM ZON WAKTU PDP (LALAI: ZON BEBAS & KEKAL APABILA DITETAPKAN) */}
+                          {/* ZON WAKTU */}
                           <td style={{ padding: '0.45rem 0.6rem' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
-                              
                               <div style={{ width: '100%' }}>
                                 <select
                                   value={demand.timeBandPreference || 'ANY'}
@@ -1500,7 +1717,7 @@ export default function Step4Curriculum(props: Props) {
                                     fontWeight: 600,
                                     cursor: 'pointer'
                                   }}
-                                  title="Pilihan zon ini akan kekal tersimpan walaupun halaman dimuat semula"
+                                  title="Pilihan zon ini akan kekal tersimpan"
                                 >
                                   <option value="ANY">🌐 Zon: Bebas (W1–W10)</option>
                                   <option value="PRE_RECESS">☀️ Zon Pagi: Pra-Rehat (W1–W4)</option>
@@ -1516,8 +1733,8 @@ export default function Step4Curriculum(props: Props) {
                                     alignItems: 'center', 
                                     gap: '4px', 
                                     fontSize: '0.70rem', 
-                                    cursor: 'pointer',
-                                    padding: '2px 5px',
+                                    cursor: 'pointer', 
+                                    padding: '2px 5px', 
                                     borderRadius: '4px',
                                     background: isParallelSub ? '#f5f3ff' : 'transparent',
                                     border: isParallelSub ? '1px solid #ddd6fe' : '1px solid transparent'
@@ -1722,7 +1939,7 @@ export default function Step4Curriculum(props: Props) {
 
           <button
             type="button"
-            onClick={handleProceedToNext}
+            onClick={() => handleProceedToNext(false)}
             disabled={activeClassesList.length === 0}
             style={{
               backgroundColor: activeClassesList.length === 0 ? '#94a3b8' : '#2563eb',
@@ -1747,7 +1964,113 @@ export default function Step4Curriculum(props: Props) {
 
       </div>
 
-      {/* MODAL RALAT LEBIHAN KAPASITI SEBELUM GENERATE */}
+      {/* MODAL KETETAPAN HAD SLOT WAKTU SEKOLAH (FUNGSI BAHARU) */}
+      {isSlotConfigModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}>
+          <div style={{ background: '#ffffff', padding: '1.5rem', borderRadius: '16px', maxWidth: '480px', width: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Sliders size={18} color="#2563eb" />
+                <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, color: '#0f172a' }}>
+                  Ketetapan Had Waktu Mingguan
+                </h3>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setIsSlotConfigModalOpen(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={16} color="#64748b" />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '1.25rem', lineHeight: 1.4 }}>
+              Sesuaikan had maksimum slot waktu seminggu bagi setiap tahap mengikut waktu persekolahan rasmi sekolah anda.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginBottom: '1.5rem' }}>
+              <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <strong style={{ fontSize: '0.82rem', color: '#1e293b' }}>Tahap 1 (Tahun 1 - 3)</strong>
+                    <div style={{ fontSize: '0.70rem', color: '#64748b' }}>Asal: 44 Waktu</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <input
+                      type="number"
+                      min={30}
+                      max={70}
+                      value={tempSlotLimits.stage1}
+                      onChange={(e) => setTempSlotLimits({ ...tempSlotLimits, stage1: Number(e.target.value) || 0 })}
+                      style={{ width: '65px', padding: '0.35rem', textAlign: 'center', fontWeight: 800, fontSize: '0.85rem', border: '1.5px solid #2563eb', borderRadius: '6px' }}
+                    />
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>W</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <strong style={{ fontSize: '0.82rem', color: '#1e293b' }}>Tahap 2 (Tahun 4 - 6)</strong>
+                    <div style={{ fontSize: '0.70rem', color: '#64748b' }}>Asal: 47 Waktu</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <input
+                      type="number"
+                      min={30}
+                      max={70}
+                      value={tempSlotLimits.stage2}
+                      onChange={(e) => setTempSlotLimits({ ...tempSlotLimits, stage2: Number(e.target.value) || 0 })}
+                      style={{ width: '65px', padding: '0.35rem', textAlign: 'center', fontWeight: 800, fontSize: '0.85rem', border: '1.5px solid #2563eb', borderRadius: '6px' }}
+                    />
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>W</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <strong style={{ fontSize: '0.82rem', color: '#1e293b' }}>Menengah / Sesi Khas</strong>
+                    <div style={{ fontSize: '0.70rem', color: '#64748b' }}>Asal: 54 Waktu</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <input
+                      type="number"
+                      min={30}
+                      max={80}
+                      value={tempSlotLimits.other}
+                      onChange={(e) => setTempSlotLimits({ ...tempSlotLimits, other: Number(e.target.value) || 0 })}
+                      style={{ width: '65px', padding: '0.35rem', textAlign: 'center', fontWeight: 800, fontSize: '0.85rem', border: '1.5px solid #cbd5e1', borderRadius: '6px' }}
+                    />
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>W</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={() => setIsSlotConfigModalOpen(false)}
+                style={{ padding: '0.45rem 1rem', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#ffffff', color: '#475569', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSlotLimits}
+                style={{ padding: '0.45rem 1.25rem', borderRadius: '6px', border: 'none', background: '#2563eb', color: '#ffffff', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 4px rgba(37,99,235,0.25)' }}
+              >
+                Simpan Ketetapan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RALAT LEBIHAN WAKTU */}
       {overloadErrorModal.isOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#ffffff', padding: '1.75rem', borderRadius: '16px', maxWidth: '640px', width: '100%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
@@ -1756,14 +2079,14 @@ export default function Step4Curriculum(props: Props) {
                 <AlertTriangle size={26} color="#dc2626" />
               </div>
               <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: '#991b1b' }}>AMARAN KRITIKAL: Kapasiti Murid Melebihi Had</h3>
-                <p style={{ margin: '2px 0 0 0', fontSize: '0.80rem', color: '#b91c1c' }}>Penyusunan jadual waktu pasti akan gagal (waktu tercicir) jika ralat ini tidak dibaiki.</p>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: '#991b1b' }}>AMARAN: Waktu Subjek Melebihi Had Ditetapkan</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.80rem', color: '#b91c1c' }}>Penyusunan jadual waktu mungkin mengalami waktu tercicir jika grid masa sekolah tidak mencukupi.</p>
               </div>
             </div>
 
-            <div style={{ maxHeight: '300px', overflowY: 'auto', paddingRight: '8px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ maxHeight: '280px', overflowY: 'auto', paddingRight: '8px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <p style={{ fontSize: '0.80rem', color: '#334155', margin: 0, lineHeight: 1.5 }}>
-                Sistem mengesan jadual kelas di bawah menuntut waktu PdP yang melebihi jumlah slot fizikal wujud dalam grid persekolahan (Maksimum 44 Waktu). Sila seimbangkan semula subjek kelas.
+                Kelas-kelas di bawah menuntut jumlah waktu yang melebihi had kuota semasa. Anda boleh seimbangkan semula waktu subjek, menaikkan had kuota dalam tetapan, atau mengabaikan amaran ini jika grid masa sekolah anda sememangnya mencukupi.
               </p>
 
               {overloadErrorModal.errors.map((err, idx) => (
@@ -1773,27 +2096,51 @@ export default function Step4Curriculum(props: Props) {
                     <span style={{ color: '#dc2626', fontWeight: 800 }}>Terlebih {err.demanded - err.maxAllowed} Waktu!</span>
                   </div>
                   <div style={{ fontSize: '0.78rem', color: '#991b1b', marginTop: '4px' }}>
-                    Menuntut: <strong>{err.demanded} Waktu</strong> &nbsp; | &nbsp; Had Maksimum Grid: <strong>{err.maxAllowed} Waktu</strong>
+                    Menuntut: <strong>{err.demanded} Waktu</strong> &nbsp; | &nbsp; Had Semasa: <strong>{err.maxAllowed} Waktu</strong>
                   </div>
                   
                   {err.duplicates.length > 0 && (
                     <div style={{ fontSize: '0.72rem', color: '#b91c1c', marginTop: '6px', display: 'flex', gap: '4px' }}>
                       <AlertCircle size={12} style={{ marginTop: '2px' }} />
-                      <span>Subjek bertindih/berganda dikesan: <strong>{err.duplicates.join(', ')}</strong> (Punca utama lebihan waktu).</span>
+                      <span>Subjek bertindih/berganda dikesan: <strong>{err.duplicates.join(', ')}</strong>.</span>
                     </div>
                   )}
                 </div>
               ))}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <button
                 type="button"
-                onClick={() => setOverloadErrorModal({ isOpen: false, errors: [] })}
-                style={{ background: '#2563eb', color: '#ffffff', border: 'none', padding: '0.55rem 1.25rem', borderRadius: '8px', fontSize: '0.80rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 4px rgba(37,99,235,0.25)' }}
+                onClick={() => {
+                  setOverloadErrorModal({ isOpen: false, errors: [] });
+                  setTempSlotLimits(slotLimits);
+                  setIsSlotConfigModalOpen(true);
+                }}
+                style={{ background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', padding: '0.55rem 1rem', borderRadius: '8px', fontSize: '0.80rem', fontWeight: 700, cursor: 'pointer' }}
               >
-                Saya Faham, Tutup Amaran
+                ⚙️ Ubah Had Kuota Sekolah
               </button>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setOverloadErrorModal({ isOpen: false, errors: [] })}
+                  style={{ background: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', padding: '0.55rem 1rem', borderRadius: '8px', fontSize: '0.80rem', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Semak Semula Subjek
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOverloadErrorModal({ isOpen: false, errors: [] });
+                    handleProceedToNext(true); // Paksa teruskan
+                  }}
+                  style={{ background: '#dc2626', color: '#ffffff', border: 'none', padding: '0.55rem 1.25rem', borderRadius: '8px', fontSize: '0.80rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 4px rgba(220,38,38,0.25)' }}
+                >
+                  Abaikan & Teruskan Juga →
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1888,7 +2235,7 @@ export default function Step4Curriculum(props: Props) {
         </div>
       )}
 
-      {/* MODAL PECAH GURU DILENGKAPKAN DENGAN BUTANG PADAM SETIAP GURU */}
+      {/* MODAL PECAH GURU */}
       {activeSplittingDemand && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#ffffff', padding: '1.5rem', borderRadius: '16px', maxWidth: '560px', width: '100%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
@@ -1909,7 +2256,7 @@ export default function Step4Curriculum(props: Props) {
             </div>
 
             <p style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '1rem' }}>
-              Tetapkan bilangan waktu bagi setiap guru. Anda boleh klik ikon tong sampah untuk memadam guru yang tidak diperlukan[cite: 16].
+              Tetapkan bilangan waktu bagi setiap guru.
             </p>
 
             <div style={{ maxHeight: '220px', overflowY: 'auto', marginBottom: '1rem', paddingRight: '4px' }}>
@@ -1945,7 +2292,6 @@ export default function Step4Curriculum(props: Props) {
                         <span style={{ fontSize: '0.76rem', fontWeight: 400, color: '#334155' }}>W</span>
                       </div>
 
-                      {/* BUTANG PADAM NAMA GURU DALAM MODAL (DIBENARKAN BILA LEBIH DARIPADA 1 GURU) */}
                       {modalAllocations.length > 1 && (
                         <button
                           type="button"
@@ -1959,8 +2305,8 @@ export default function Step4Curriculum(props: Props) {
                             padding: '5px', 
                             borderRadius: '6px',
                             display: 'flex', 
-                            alignItems: 'center',
-                            justifyContent: 'center',
+                            alignItems: 'center', 
+                            justifyContent: 'center', 
                             transition: 'all 0.15s ease'
                           }}
                         >
@@ -2018,7 +2364,6 @@ export default function Step4Curriculum(props: Props) {
                   <UserPlus size={13} /> Tambah Guru
                 </button>
 
-                {/* BUTANG BATALKAN PECAHAN / KEMBALI GURU TUNGGAL */}
                 {modalAllocations.length > 1 && (
                   <button
                     type="button"
